@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: triton-model
+  namespace: llm-serving
+data:
+  config.pbtxt: |
+    name: "echo"
+    platform: "onnxruntime_onnx"
+    max_batch_size: 64
+    input [{ name: "INPUT0" data_type: TYPE_FP32 dims: [1] }]
+    output [{ name: "OUTPUT0" data_type: TYPE_FP32 dims: [1] }]
+    instance_group [{ count: 1 kind: KIND_CPU }]
+binaryData:
+  model.onnx: CA46bQodCgZJTlBVVDAKBXNjYWxlEgdPVVRQVVQwIgNNdWwSCGNwdV9lY2hvKhEIARABIgQAAABAQgVzY2FsZVoWCgZJTlBVVDASDAoKCAESBgoACgIIAWIXCgdPVVRQVVQwEgwKCggBEgYKAAoCCAFCBAoAEA0=

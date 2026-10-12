@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: triton, namespace: llm-serving}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: triton}}
+  template:
+    metadata: {labels: {app: triton}}
+    spec:
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.10-py3
+          args: ["tritonserver", "--model-repository=/models", "--strict-readiness=true"]
+          ports: [{containerPort: 8000}]
+          volumeMounts: [{name: model, mountPath: /models}]
+          readinessProbe: {httpGet: {path: /v2/health/ready, port: 8000}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /v2/health/live, port: 8000}, periodSeconds: 10}
+      initContainers:
+        - name: prepare-model
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /models/echo/1 && cp /source/config.pbtxt /models/echo/config.pbtxt && cp /source/model.onnx /models/echo/1/model.onnx"]
+          volumeMounts:
+            - {name: source, mountPath: /source}
+            - {name: model, mountPath: /models}
+      volumes:
+        - name: source
+          configMap: {name: triton-model}
+        - name: model
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: triton, namespace: llm-serving}
+spec:
+  selector: {app: triton}
+  ports: [{name: http, port: 8000, targetPort: 8000}]

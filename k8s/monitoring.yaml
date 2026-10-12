@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: llm-serving
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: gateway
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["gateway:8080"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: llm-serving}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=24h"]
+          ports: [{containerPort: 9090}]
+          volumeMounts: [{name: config, mountPath: /etc/prometheus}]
+          readinessProbe: {httpGet: {path: /-/ready, port: 9090}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /-/healthy, port: 9090}, periodSeconds: 10}
+      volumes: [{name: config, configMap: {name: prometheus-config}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: llm-serving}
+spec:
+  selector: {app: prometheus}
+  ports: [{port: 9090, targetPort: 9090}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: llm-serving
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: serving
+        type: file
+        options: {path: /var/lib/grafana/dashboards}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard
+  namespace: llm-serving
+data:
+  serving.json: |
+    {
+      "title": "Distributed LLM Serving",
+      "schemaVersion": 39,
+      "refresh": "15s",
+      "panels": [
+        {"type":"timeseries","title":"Request rate","gridPos":{"x":0,"y":0,"w":12,"h":8},"targets":[{"expr":"sum by (route) (rate(gateway_requests_total[5m]))","legendFormat":"{{route}}"}]},
+        {"type":"timeseries","title":"p95 inference latency","gridPos":{"x":12,"y":0,"w":12,"h":8},"targets":[{"expr":"histogram_quantile(0.95, sum by (le, backend) (rate(gateway_request_duration_seconds_bucket[5m])))","legendFormat":"{{backend}}"}]},
+        {"type":"timeseries","title":"Backend failures","gridPos":{"x":0,"y":8,"w":12,"h":8},"targets":[{"expr":"sum by (backend, reason) (rate(gateway_backend_failures_total[5m]))","legendFormat":"{{backend}} / {{reason}}"}]},
+        {"type":"stat","title":"Error rate","gridPos":{"x":12,"y":8,"w":12,"h":8},"targets":[{"expr":"sum(rate(gateway_requests_total{status=~\"5..\"}[5m])) / sum(rate(gateway_requests_total[5m]))"}]}
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana, namespace: llm-serving}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          ports: [{containerPort: 3000}]
+          env:
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "true"}
+            - {name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer}
+          volumeMounts:
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/datasources}
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/dashboards}
+            - {name: dashboard, mountPath: /var/lib/grafana/dashboards}
+          readinessProbe: {httpGet: {path: /api/health, port: 3000}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /api/health, port: 3000}, periodSeconds: 10}
+      volumes:
+        - name: provisioning
+          configMap: {name: grafana-provisioning}
+        - name: dashboard
+          configMap: {name: grafana-dashboard}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: llm-serving}
+spec:
+  selector: {app: grafana}
+  ports: [{port: 3000, targetPort: 3000}]

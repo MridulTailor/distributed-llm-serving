@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: vllm, namespace: llm-serving}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: vllm}}
+  template:
+    metadata: {labels: {app: vllm}}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: vllm
+          image: ${VLLM_IMAGE}
+          args: ["facebook/opt-125m", "--host", "0.0.0.0", "--port", "8000", "--max-model-len", "512", "--gpu-memory-utilization", "0.4", "--chat-template", "{% for message in messages %}{{ message['content'] }}{% endfor %}"]
+          ports: [{containerPort: 8000}]
+          volumeMounts: [{name: shm, mountPath: /dev/shm}]
+          startupProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 10, failureThreshold: 60}
+          readinessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 10, failureThreshold: 12}
+          livenessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 20, failureThreshold: 6}
+          resources:
+            requests: {cpu: "1", memory: 4Gi}
+            limits: {cpu: "2", memory: 6Gi}
+      volumes:
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vllm, namespace: llm-serving}
+spec:
+  selector: {app: vllm}
+  ports: [{port: 8000, targetPort: 8000}]
